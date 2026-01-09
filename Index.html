@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Firebase Discord Lite 2.0</title>
+<style>
+body { font-family:Arial; margin:0; background:#36393f; color:white; display:flex; height:100vh; }
+#channels, #users { width:180px; background:#2f3136; padding:10px; overflow-y:auto; -webkit-overflow-scrolling: touch; }
+#main { flex:1; display:flex; flex-direction:column; }
+#chatHeader { padding:5px 10px; background:#202225; font-weight:bold; }
+#chat { flex:1; padding:10px; overflow-y:auto; }
+.message { margin-bottom:6px; }
+.username { font-weight:bold; }
+.system { color:#faa61a; font-style:italic; }
+.admin { color:#f04747; }
+.channel { cursor:pointer; margin-bottom:5px; }
+.channel:hover { color:#7289da; }
+.online { font-weight:bold; padding:6px 4px; border-radius:4px; cursor:pointer; }
+.online:hover { background: rgba(114, 137, 218, 0.2); }
+input, button { padding:5px; margin:3px; border:none; }
+button { background:#7289da; color:white; cursor:pointer; }
+button:hover { background:#5b6eae; }
+
+/* MOBILE RESPONSIVE */
+@media (max-width: 600px){
+  body { flex-direction: column; }
+  #channels, #users { width: 100%; height: 60px; display: flex; overflow-x: auto; padding:5px; }
+  #channels div, #users div { margin-right: 10px; white-space: nowrap; }
+  #main { flex: 1; }
+  #chat { flex: 1; }
+}
+</style>
+</head>
+<body>
+
+<div id="channels">
+<h4>Channels</h4>
+<div onclick="switchChannel('general')" class="channel"># general</div>
+<div onclick="switchChannel('random')" class="channel"># random</div>
+<div onclick="switchChannel('dev')" class="channel"># dev</div>
+</div>
+
+<div id="main">
+<div id="login"></div>
+<div id="chatHeader"></div>
+<div id="chat"></div>
+<input id="msg" placeholder="Message">
+<button onclick="backToChannel()">Back</button>
+</div>
+
+<div id="users">
+<h4>Online</h4>
+<div id="userList"></div>
+</div>
+
+<script type="module">
+// ================= IMPORTS =================
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.7.0/firebase-app.js";
+import { getAnalytics } from "https://www.gstatic.com/firebasejs/12.7.0/firebase-analytics.js";
+import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.7.0/firebase-auth.js";
+import { getDatabase, ref, set, push, onValue, remove, get } from "https://www.gstatic.com/firebasejs/12.7.0/firebase-database.js";
+
+// ================= FIREBASE CONFIG =================
+const firebaseConfig = {
+  apiKey: "AIzaSyAr2WD_WZydtVfl96CVXj0xzPhzf6UB9MI",
+  authDomain: "online-chat-536f1.firebaseapp.com",
+  databaseURL: "https://online-chat-536f1-default-rtdb.firebaseio.com",
+  projectId: "online-chat-536f1",
+  storageBucket: "online-chat-536f1.firebasestorage.app",
+  messagingSenderId: "898340850426",
+  appId: "1:898340850426:web:c92bc391593b4624e61743",
+  measurementId: "G-7TFSRM2WB4"
+};
+
+// ================= INITIALIZE =================
+const app = initializeApp(firebaseConfig);
+const analytics = getAnalytics(app);
+const auth = getAuth(app);
+const db = getDatabase(app);
+
+// ================= STATE =================
+let currentUser = null;
+let channel = "general";
+let dmUser = null;
+let userColors = {};
+let adminEmails = ["ethanq.au@gmail.com"]; // YOU ARE ADMIN
+let onlineUsers = {};
+
+// ================= LOGIN/REGISTER =================
+const loginDiv = document.getElementById("login");
+function showLogin() {
+  loginDiv.innerHTML = `
+    <input id="email" placeholder="Email">
+    <input id="password" type="password" placeholder="Password">
+    <button onclick="login()">Login</button>
+    <button onclick="register()">Register</button>`;
+}
+
+async function login() {
+  const email = document.getElementById("email").value;
+  const password = document.getElementById("password").value;
+  try {
+    const userCred = await signInWithEmailAndPassword(auth, email, password);
+    const uid = userCred.user.uid;
+    const snap = await get(ref(db, 'users/' + uid));
+    const info = snap.val();
+    if(info?.banned) return alert("You are banned.");
+    if(info?.timeout && Date.now() < info.timeout) return alert("You are timed out.");
+  } catch(e) { alert(e.message); }
+}
+
+async function register() {
+  const email = document.getElementById("email").value;
+  const password = document.getElementById("password").value;
+  try {
+    const userCred = await createUserWithEmailAndPassword(auth, email, password);
+    const color = `hsl(${Math.random()*360},70%,70%)`;
+    userColors[userCred.user.uid] = color;
+    await set(ref(db, 'users/' + userCred.user.uid), {
+      email,
+      color,
+      admin: adminEmails.includes(email)
+    });
+    alert("Account created! Login now.");
+  } catch(e) { alert(e.message); }
+}
+
+// ================= AUTH STATE =================
+onAuthStateChanged(auth, user => {
+  if(user){
+    currentUser = user;
+    loginDiv.innerHTML = `Logged in as ${user.email}`;
+    goOnline();
+  } else {
+    currentUser = null;
+    showLogin();
+  }
+});
+
+// ================= ONLINE USERS =================
+function goOnline() {
+  if(!currentUser) return;
+  const userRef = ref(db, "online/" + currentUser.uid);
+  set(userRef, {email: currentUser.email, color: userColors[currentUser.uid]});
+  userRef.onDisconnect().remove();
+  onValue(ref(db, "online"), snap=>{
+    onlineUsers = snap.val()||{};
+    renderOnline();
+  });
+}
+
+function renderOnline() {
+  const list = document.getElementById("userList");
+  list.innerHTML = "";
+  Object.entries(onlineUsers).forEach(([uid,u])=>{
+    const div = document.createElement("div");
+    div.textContent = u.email;
+    div.style.color = u.color;
+    div.className="online";
+    if(currentUser.uid!==uid) div.onclick = ()=>openDM(uid,u.email);
+    list.appendChild(div);
+  });
+}
+
+// ================= CHANNELS =================
+function switchChannel(c){ channel=c; dmUser=null; document.getElementById("chatHeader").textContent=""; sendSystem(`Switched to #${c}`); fetchMessages(); }
+
+// ================= CHAT =================
+const chatDiv = document.getElementById("chat");
+const chatHeader = document.getElementById("chatHeader");
+const msgInput = document.getElementById("msg");
+
+async function sendMessage(){
+  if(!currentUser) return alert("Login first");
+  const uid = currentUser.uid;
+  const userSnap = await get(ref(db, 'users/'+uid));
+  const info = userSnap.val();
+  if(info?.banned) return alert("You are banned.");
+  if(info?.timeout && Date.now() < info.timeout) return alert("You are timed out.");
+
+  const text = msgInput.value.trim();
+  if(!text) return;
+  const isAdmin = adminEmails.includes(currentUser.email);
+
+  if(dmUser){
+    const path = [currentUser.uid, dmUser].sort().join("_");
+    push(ref(db, "dm/" + path),{
+      uid, email: currentUser.email, text,
+      color: userColors[uid]||"#fff",
+      time: new Date().toLocaleTimeString(),
+    });
+  } else {
+    if(text.startsWith("/") && isAdmin){
+      if(text.startsWith("/clear")) remove(ref(db,"messages/"+channel));
+      else if(text.startsWith("/ban ")){
+        const targetEmail = text.split(" ")[1];
+        await banUser(targetEmail);
+      }
+      else if(text.startsWith("/timeout ")){
+        const [_, targetEmail, seconds] = text.split(" ");
+        await timeoutUser(targetEmail, parseInt(seconds));
+      }
+      else if(text.startsWith("/switchchannel ")){
+        switchChannel(text.split(" ")[1]);
+      }
+      sendSystem(`ADMIN: ${text}`);
+    } else {
+      push(ref(db,"messages/"+channel),{
+        uid, email:currentUser.email, text,
+        color:userColors[uid]||"#fff",
+        time:new Date().toLocaleTimeString(),
+        admin:isAdmin
+      });
+    }
+  }
+  msgInput.value="";
+}
+
+// ================= ADMIN FUNCTIONS =================
+async function banUser(email){
+  const usersSnap = await get(ref(db,'users'));
+  const users = usersSnap.val();
+  for(const [uid, u] of Object.entries(users)){
+    if(u.email===email){
+      await set(ref(db,'users/'+uid+'/banned'), true);
+      sendSystem(`User ${email} was banned!`);
+    }
+  }
+}
+
+async function timeoutUser(email, seconds){
+  const usersSnap = await get(ref(db,'users'));
+  const users = usersSnap.val();
+  for(const [uid,u] of Object.entries(users)){
+    if(u.email===email){
+      const until = Date.now() + seconds*1000;
+      await set(ref(db,'users/'+uid+'/timeout'), until);
+      sendSystem(`User ${email} timed out for ${seconds} seconds!`);
+    }
+  }
+}
+
+// ================= MESSAGES =================
+async function fetchMessages(){
+  onValue(ref(db,"messages/"+channel), snap=>{
+    chatDiv.innerHTML="";
+    const msgs = snap.val()||{};
+    Object.values(msgs).forEach(m=>{
+      const div = document.createElement("div");
+      div.className="message"+(m.admin?" admin":"");
+      if(m.system) div.className+=" system";
+      div.innerHTML=`<span class="username" style="color:${m.color}">${m.admin?"👑":""}${m.email}</span> <small>${m.time}</small>: ${m.text}`;
+      chatDiv.appendChild(div);
+    });
+    chatDiv.scrollTop = chatDiv.scrollHeight;
+  });
+}
+fetchMessages();
+
+// ================= DM FUNCTIONS =================
+function openDM(targetUid, targetEmail){
+  dmUser = targetUid;
+  chatHeader.textContent = "DM with " + targetEmail;
+  fetchDM();
+}
+
+function backToChannel(){
+  dmUser = null;
+  chatHeader.textContent = "";
+  fetchMessages();
+}
+
+function fetchDM(){
+  if(!dmUser || !currentUser) return;
+  const path = [currentUser.uid, dmUser].sort().join("_");
+  onValue(ref(db, "dm/" + path), snap => {
+    chatDiv.innerHTML="";
+    const msgs = snap.val()||{};
+    Object.values(msgs).forEach(m=>{
+      const div = document.createElement("div");
+      div.className="message";
+      div.innerHTML=`<span class="username" style="color:${m.color}">${m.email}</span> <small>${m.time}</small>: ${m.text}`;
+      chatDiv.appendChild(div);
+    });
+    chatDiv.scrollTop = chatDiv.scrollHeight;
+  });
+}
+
+// ================= SYSTEM =================
+function sendSystem(text){
+  push(ref(db,"messages/"+channel),{
+    uid:"system", email:"SYSTEM",
+    text, color:"#faa61a", time:new Date().toLocaleTimeString(),
+    system:true
+  });
+}
+
+msgInput.addEventListener("keydown", e=>{if(e.key==="Enter") sendMessage();});
+</script>
+</body>
+</html>
