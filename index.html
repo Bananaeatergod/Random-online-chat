@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Firebase Discord Lite 4.1</title>
+<title>Firebase Discord Lite 4.2</title>
 <style>
 body { font-family:Arial; margin:0; background:#36393f; color:white; display:flex; height:100vh; }
 #channels, #users { width:180px; background:#2f3136; padding:10px; overflow-y:auto; -webkit-overflow-scrolling: touch; }
@@ -12,7 +12,6 @@ body { font-family:Arial; margin:0; background:#36393f; color:white; display:fle
 .message { margin-bottom:6px; }
 .username { font-weight:bold; }
 .system { color:#faa61a; font-style:italic; }
-.admin { color:#f04747; }
 .channel { cursor:pointer; margin-bottom:5px; }
 .channel:hover { color:#7289da; }
 .online-user { font-weight:bold; padding:2px 4px; border-radius:4px; cursor:pointer; display:flex; align-items:center; }
@@ -80,6 +79,7 @@ const db = getDatabase(app);
 
 // ================= STATE =================
 let currentUser=null, channel="general", dmUser=null, userColors={}, onlineUsers={}, channels=[];
+let lastMessageTime=0;
 
 // ================= LOGIN =================
 const loginDiv=document.getElementById("login");
@@ -162,7 +162,9 @@ async function renderUsers(){
     status.style.marginRight="6px"; status.style.borderRadius="50%";
     status.style.backgroundColor=onlineUIDs.has(uid)?"green":"red";
     div.prepend(status);
-    div.append(u.email);
+    let displayName = u.email;
+    if(u.admin) displayName = "👑 "+displayName;
+    div.append(displayName);
     if(!currentUser?.guest && currentUser?.uid!==uid) div.onclick=()=>openDM(uid,u.email);
     list.appendChild(div);
   });
@@ -216,7 +218,22 @@ document.getElementById("backBtn").onclick=backToChannel;
 
 async function sendMessage(){
   if(!currentUser) return alert("Login first");
+  const now=Date.now();
+  if(now - lastMessageTime < 5000){ alert("You are on cooldown for 5 seconds!"); return; }
   const text=msgInput.value.trim(); if(!text) return;
+  lastMessageTime = now;
+
+  // Admin command: /clear
+  if(currentUser && !currentUser.guest){
+    const snap=await get(ref(db,'users/'+currentUser.uid));
+    const info=snap.val();
+    if(info?.admin && text==="/clear"){
+      remove(ref(db,"messages/"+channel));
+      msgInput.value="";
+      return;
+    }
+  }
+
   if(text.includes("@everyone") && !currentUser.guest) pingSound.play();
   push(ref(db,"messages/"+channel),{
     uid:currentUser.uid,email:currentUser.email,text,
@@ -232,7 +249,14 @@ async function fetchMessages(){
     Object.values(msgs).forEach(m=>{
       const div=document.createElement("div"); div.className="message";
       let t=m.text.replace(/@everyone/g,'<span class="highlight">@everyone</span>');
-      div.innerHTML=`<span class="username" style="color:${m.color}">${m.email}</span> <small>${m.time}</small>: ${t}`;
+      let displayColor = m.color;
+      let displayName = m.email;
+      // Check admin for crown + red
+      get(ref(db,'users/'+m.uid)).then(uSnap=>{
+        const info=uSnap.val();
+        if(info?.admin){ displayColor="red"; displayName="👑 "+displayName; }
+        div.innerHTML=`<span class="username" style="color:${displayColor}">${displayName}</span> <small>${m.time}</small>: ${t}`;
+      });
       chatDiv.appendChild(div);
     });
     chatDiv.scrollTop=chatDiv.scrollHeight;
