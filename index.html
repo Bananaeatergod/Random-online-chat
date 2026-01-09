@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Firebase Discord Lite 2.0 Mobile Fixed</title>
+<title>Firebase Discord Lite 2.2 - Online/Offline Sidebar</title>
 <style>
 body { font-family:Arial; margin:0; background:#36393f; color:white; display:flex; height:100vh; }
 #channels, #users { width:180px; background:#2f3136; padding:10px; overflow-y:auto; -webkit-overflow-scrolling: touch; }
@@ -15,8 +15,8 @@ body { font-family:Arial; margin:0; background:#36393f; color:white; display:fle
 .admin { color:#f04747; }
 .channel { cursor:pointer; margin-bottom:5px; }
 .channel:hover { color:#7289da; }
-.online { font-weight:bold; padding:6px 4px; border-radius:4px; cursor:pointer; }
-.online:hover { background: rgba(114, 137, 218, 0.2); }
+.online-user { font-weight:bold; padding:6px 4px; border-radius:4px; cursor:pointer; }
+.online-user:hover { background: rgba(114, 137, 218, 0.2); }
 input, button { padding:5px; margin:3px; border:none; }
 button { background:#7289da; color:white; cursor:pointer; touch-action: manipulation; }
 button:hover { background:#5b6eae; }
@@ -49,7 +49,7 @@ button:hover { background:#5b6eae; }
 </div>
 
 <div id="users">
-<h4>Online</h4>
+<h4>Users</h4>
 <div id="userList"></div>
 </div>
 
@@ -161,29 +161,58 @@ onAuthStateChanged(auth, user => {
   }
 });
 
-// ================= ONLINE USERS =================
-function goOnline() {
+// ================= ONLINE/OFFLINE USERS =================
+async function goOnline() {
   if(!currentUser) return;
   const userRef = ref(db, "online/" + currentUser.uid);
   set(userRef, {email: currentUser.email, color: userColors[currentUser.uid]});
   userRef.onDisconnect().remove();
   onValue(ref(db, "online"), snap=>{
     onlineUsers = snap.val()||{};
-    renderOnline();
+    renderUsers();
   });
 }
 
-function renderOnline() {
+async function renderUsers() {
   const list = document.getElementById("userList");
   list.innerHTML = "";
-  Object.entries(onlineUsers).forEach(([uid,u])=>{
+
+  // Get all registered users
+  const usersSnap = await get(ref(db,'users'));
+  const allUsers = usersSnap.val() || {};
+
+  const onlineDiv = document.createElement("div");
+  const offlineDiv = document.createElement("div");
+  onlineDiv.innerHTML = "<b>ONLINE</b><br>";
+  offlineDiv.innerHTML = "<b>OFFLINE</b><br>";
+
+  const onlineUIDs = new Set(Object.keys(onlineUsers));
+
+  // Registered users
+  Object.entries(allUsers).forEach(([uid,u])=>{
     const div = document.createElement("div");
     div.textContent = u.email;
-    div.style.color = u.color;
-    div.className="online";
-    if(currentUser.uid!==uid) div.addEventListener("click", ()=>openDM(uid,u.email));
-    list.appendChild(div);
+    div.style.color = u.color || "#fff";
+    div.className = "online-user";
+    if(currentUser?.uid !== uid) div.addEventListener("click", ()=>openDM(uid,u.email));
+
+    if(onlineUIDs.has(uid)) onlineDiv.appendChild(div);
+    else offlineDiv.appendChild(div);
   });
+
+  // Guests
+  Object.entries(onlineUsers).forEach(([uid,u])=>{
+    if(uid.startsWith("guest_")) {
+      const div = document.createElement("div");
+      div.textContent = u.email;
+      div.style.color = u.color;
+      div.className = "online-user";
+      onlineDiv.appendChild(div);
+    }
+  });
+
+  list.appendChild(onlineDiv);
+  list.appendChild(offlineDiv);
 }
 
 // ================= CHANNELS =================
@@ -192,7 +221,11 @@ document.querySelectorAll(".channel").forEach(ch=>{
 });
 document.getElementById("backBtn").addEventListener("click", backToChannel);
 
-function switchChannel(c){ channel=c; dmUser=null; document.getElementById("chatHeader").textContent=""; sendSystem(`Switched to #${c}`); fetchMessages(); }
+function switchChannel(c){
+  channel=c; dmUser=null; chatHeader.textContent="";
+  sendLocalSystem(`Switched to #${c}`);
+  fetchMessages();
+}
 
 // ================= CHAT =================
 const chatDiv = document.getElementById("chat");
@@ -233,7 +266,7 @@ async function sendMessage(){
       else if(text.startsWith("/switchchannel ")){
         switchChannel(text.split(" ")[1]);
       }
-      sendSystem(`ADMIN: ${text}`);
+      sendLocalSystem(`ADMIN: ${text}`);
     } else {
       push(ref(db,"messages/"+channel),{
         uid, email:currentUser.email, text,
@@ -253,7 +286,7 @@ async function banUser(email){
   for(const [uid, u] of Object.entries(users)){
     if(u.email===email){
       await set(ref(db,'users/'+uid+'/banned'), true);
-      sendSystem(`User ${email} was banned!`);
+      sendLocalSystem(`User ${email} was banned!`);
     }
   }
 }
@@ -265,7 +298,7 @@ async function timeoutUser(email, seconds){
     if(u.email===email){
       const until = Date.now() + seconds*1000;
       await set(ref(db,'users/'+uid+'/timeout'), until);
-      sendSystem(`User ${email} timed out for ${seconds} seconds!`);
+      sendLocalSystem(`User ${email} timed out for ${seconds} seconds!`);
     }
   }
 }
@@ -316,13 +349,13 @@ function fetchDM(){
   });
 }
 
-// ================= SYSTEM =================
-function sendSystem(text){
-  push(ref(db,"messages/"+channel),{
-    uid:"system", email:"SYSTEM",
-    text, color:"#faa61a", time:new Date().toLocaleTimeString(),
-    system:true
-  });
+// ================= LOCAL SYSTEM =================
+function sendLocalSystem(text){
+  const div = document.createElement("div");
+  div.className = "message system";
+  div.innerHTML = `<span class="username" style="color:#faa61a">SYSTEM</span>: ${text}`;
+  chatDiv.appendChild(div);
+  chatDiv.scrollTop = chatDiv.scrollHeight;
 }
 
 msgInput.addEventListener("keydown", e=>{if(e.key==="Enter") sendMessage();});
