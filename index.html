@@ -90,7 +90,7 @@ const db = getDatabase(app);
 
 // ================= STATE =================
 let currentUser=null, channel="general", dmUser=null, userColors={}, onlineUsers={}, channels=[];
-let lastMessageTime=0;
+let messageTimestamps=[];
 
 // ================= LOGIN =================
 const loginDiv=document.getElementById("login");
@@ -116,7 +116,11 @@ async function register(){
     const userCred=await createUserWithEmailAndPassword(auth,email,password);
     const color = randomColor();
     userColors[userCred.user.uid]=color;
-    await set(ref(db,'users/'+userCred.user.uid),{email,color,admin:(email==="ethanq.au@gmail.com" || email==="bananaeatergod@outlook.com")});
+    await set(ref(db,'users/'+userCred.user.uid),{
+      email,
+      color,
+      admin:(email==="ethanq.au@gmail.com" || email==="bananaeatergod@outlook.com")
+    });
     alert("Account created! Login now.");
   }catch(e){alert(e.message);}
 }
@@ -126,12 +130,6 @@ async function login(){
   try{
     const userCred=await signInWithEmailAndPassword(auth,email,password);
     const uid=userCred.user.uid;
-
-    // Remove duplicate guest entries
-    Object.keys(onlineUsers).forEach(oid=>{
-      if(onlineUsers[oid].email.startsWith("Guest_")) remove(ref(db,"online/"+oid));
-    });
-
     const snap=await get(ref(db,'users/'+uid));
     const info=snap.val();
     if(info?.banned) return alert("You are banned.");
@@ -151,19 +149,18 @@ function guestLogin(){
 onAuthStateChanged(auth,user=>{
   if(user){
     currentUser=user;
-    // Ensure user has a color
-    get(ref(db,'users/'+user.uid)).then(snap=>{
+    const userRef = ref(db,'users/'+user.uid);
+    get(userRef).then(snap=>{
       const info = snap.val();
-      if(!info.color){
+      if(!info?.color){
         const color = randomColor();
         userColors[user.uid] = color;
-        set(ref(db,'users/'+user.uid+'/color'), color);
+        set(userRef+'/color', color);
       } else { userColors[user.uid] = info.color; }
     });
     loginDiv.innerHTML=`Logged in as ${user.email}`;
     goOnline(); renderChannels(); renderUsers();
-  } 
-  else if(!currentUser?.guest) currentUser=null;
+  } else if(!currentUser?.guest) currentUser=null;
 });
 
 // ================= ONLINE USERS =================
@@ -202,6 +199,7 @@ async function renderUsers(){
 
     let displayName = u.email;
     if(u.admin) displayName = "👑 "+displayName;
+    div.style.color = u.admin ? "red" : (userColors[uid] || "#fff");
     div.append(displayName);
 
     if(!currentUser?.guest && currentUser?.uid!==uid) div.onclick=()=>openDM(uid,u.email);
@@ -224,10 +222,8 @@ async function renderChannels(){
     const div=document.createElement("div");
     div.textContent="# "+ch; div.className="channel";
 
-    // click to switch
     div.onclick=()=>switchChannel(ch);
 
-    // delete button for admins
     if(currentUser && !currentUser.guest){
       const snap = await get(ref(db,'users/'+currentUser.uid));
       if(snap.val()?.admin){
@@ -242,7 +238,6 @@ async function renderChannels(){
         div.appendChild(delBtn);
       }
     }
-
     channelListDiv.appendChild(div);
   });
   if(currentUser && !currentUser.guest){
@@ -277,17 +272,22 @@ msgInput.addEventListener("input",updateMentionList);
 msgInput.addEventListener("keydown",e=>{if(e.key==="Enter") sendMessage();});
 document.getElementById("backBtn").onclick=backToChannel;
 
+// ================= SEND MESSAGE =================
 async function sendMessage(){
   if(!currentUser) return alert("Login first");
   const now=Date.now();
-  if(now - lastMessageTime < 5000){ showSpamPopup(); return; }
-  lastMessageTime = now;
+  messageTimestamps.push(now);
+  messageTimestamps = messageTimestamps.filter(ts=>now-ts<=5000);
 
-  // Admin command: /clear
+  if(messageTimestamps.length>=10){ showSpamPopup(); return; }
+
+  const text=msgInput.value.trim(); if(!text) return;
+
+  // Admin /clear
   if(currentUser && !currentUser.guest){
     const snap=await get(ref(db,'users/'+currentUser.uid));
     const info=snap.val();
-    if(info?.admin && msgInput.value==="/clear"){
+    if(info?.admin && text==="/clear"){
       remove(ref(db,"messages/"+channel));
       msgInput.value="";
       sendAdminAction(`CLEARED THE CHAT`);
@@ -295,17 +295,19 @@ async function sendMessage(){
     }
   }
 
-  const text=msgInput.value.trim(); if(!text) return;
   if(text.includes("@everyone") && !currentUser.guest) pingSound.play();
+
   push(ref(db,"messages/"+channel),{
     uid:currentUser.uid,email:currentUser.email,text,
     color:userColors[currentUser.uid]||"#fff",
     time:new Date().toLocaleTimeString(),
     dm: dmUser ? dmUser : null
   });
+
   msgInput.value=""; mentionList.style.display="none";
 }
 
+// ================= FETCH MESSAGES =================
 async function fetchMessages(){
   onValue(ref(db,"messages/"+channel),snap=>{
     chatDiv.innerHTML="";
@@ -315,14 +317,11 @@ async function fetchMessages(){
 
       const div=document.createElement("div"); div.className="message";
       let t=m.text.replace(/@everyone/g,'<span class="highlight">@everyone</span>');
-
-      // Highlight @mentions
       const mentionRegex = new RegExp("@"+currentUser.email,"gi");
       t = t.replace(mentionRegex, `<span class="highlight">@$&</span>`);
 
-      let displayColor = m.color;
+      let displayColor = m.color || "#fff";
       let displayName = m.email;
-
       get(ref(db,'users/'+m.uid)).then(uSnap=>{
         const info=uSnap.val();
         if(info?.admin){
@@ -331,7 +330,6 @@ async function fetchMessages(){
         if(dmUser) displayColor="#b27aff"; // purple for DMs
         div.innerHTML=`<span class="username" style="color:${displayColor}">${displayName}</span> <small>${m.time}</small>: ${t}`;
       });
-
       chatDiv.appendChild(div);
     });
     chatDiv.scrollTop=chatDiv.scrollHeight;
@@ -343,13 +341,7 @@ function switchChannel(c){ channel=c; dmUser=null; chatHeader.textContent=""; se
 function openDM(targetUid,targetEmail){ dmUser=targetUid; chatHeader.textContent="DM with "+targetEmail; fetchMessages(); }
 function backToChannel(){ dmUser=null; chatHeader.textContent=""; fetchMessages(); }
 function sendLocalSystem(text){ const div=document.createElement("div"); div.className="message system"; div.innerHTML=`<span class="username" style="color:#faa61a">SYSTEM</span>: ${text}`; chatDiv.appendChild(div); chatDiv.scrollTop=chatDiv.scrollHeight; }
-
-function sendAdminAction(action){
-  const div=document.createElement("div"); div.className="message system";
-  div.innerHTML=`<span class="username" style="color:red">@ ADMIN</span> HAS ${action}`;
-  chatDiv.appendChild(div);
-  chatDiv.scrollTop=chatDiv.scrollHeight;
-}
+function sendAdminAction(action){ const div=document.createElement("div"); div.className="message system"; div.innerHTML=`<span class="username" style="color:red">@ ADMIN</span> HAS ${action}`; chatDiv.appendChild(div); chatDiv.scrollTop=chatDiv.scrollHeight; }
 
 // ================= MENTION LIST =================
 async function updateMentionList(){
@@ -392,16 +384,14 @@ function showSpamPopup(){
     spamBarFill.style.width=(elapsed*100)+"%";
   },50);
 }
+spamOkBtn.onclick=()=>{ spamPopup.style.display="none"; };
 
 // ================= UTIL =================
 function randomColor(){ return `hsl(${Math.random()*360},70%,70%)`; }
 
-// ================= INITIALIZATION =================
+// ================= INITIALIZE =================
 fetchChannels();
 renderUsers();
-
-// Spam OKAY button
-spamOkBtn.onclick=()=>{ spamPopup.style.display="none"; };
 </script>
 </body>
 </html>
