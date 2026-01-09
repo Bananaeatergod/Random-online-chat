@@ -1,0 +1,33 @@
+body { font-family:Arial; margin:0; background:#36393f; color:white; display:flex; height:100vh; }
+#channels, #users { width:180px; background:#2f3136; padding:10px; overflow-y:auto; -webkit-overflow-scrolling: touch; }
+#main { flex:1; display:flex; flex-direction:column; position: relative; }
+#chatHeader { padding:5px 10px; background:#202225; font-weight:bold; }
+#chat { flex:1; padding:10px; overflow-y:auto; }
+.message { margin-bottom:6px; word-break: break-word; }
+.username { font-weight:bold; }
+.system { color:#faa61a; font-style:italic; }
+.channel { cursor:pointer; margin-bottom:5px; display:flex; justify-content:space-between; align-items:center; }
+.channel:hover { color:#7289da; }
+.online-user { font-weight:bold; padding:2px 4px; border-radius:4px; cursor:pointer; display:flex; align-items:center; }
+.online-user:hover { background: rgba(114, 137, 218, 0.2); }
+input, button { padding:5px; margin:3px; border:none; }
+button { background:#7289da; color:white; cursor:pointer; touch-action: manipulation; }
+button:hover { background:#5b6eae; }
+#mentionList { position:absolute; bottom:40px; left:10px; background:#2f3136; color:white; border:1px solid #7289da; max-height:120px; overflow-y:auto; display:none; z-index:10; }
+#mentionList div{ padding:3px 5px; cursor:pointer; }
+#mentionList div:hover{ background:#7289da; }
+.highlight{ background:#7289da; }
+
+#spamPopup { position: fixed; top:50%; left:50%; transform:translate(-50%,-50%); background:#202225; padding:20px; border:2px solid #7289da; display:none; z-index:999; text-align:center; }
+#spamBar { width:200px; height:10px; background:black; margin:10px auto; }
+#spamBarFill { width:0%; height:100%; background:#7289da; }
+
+#timeoutBar { position:fixed;bottom:0;left:0;width:100%;background:#202225;color:white;text-align:center;padding:5px;display:none; }
+
+@media (max-width: 600px){
+  body { flex-direction: column; }
+  #channels, #users { width: 100%; height: 60px; display: flex; overflow-x: auto; padding:5px; }
+  #channels div, #users div { margin-right: 10px; white-space: nowrap; }
+  #main { flex:1; }
+  #chat { flex:1; }
+}
