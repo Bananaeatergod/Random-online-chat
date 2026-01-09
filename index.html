@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Firebase Discord Lite 2.0</title>
+<title>Firebase Discord Lite 2.0 Mobile Fixed</title>
 <style>
 body { font-family:Arial; margin:0; background:#36393f; color:white; display:flex; height:100vh; }
 #channels, #users { width:180px; background:#2f3136; padding:10px; overflow-y:auto; -webkit-overflow-scrolling: touch; }
@@ -18,7 +18,7 @@ body { font-family:Arial; margin:0; background:#36393f; color:white; display:fle
 .online { font-weight:bold; padding:6px 4px; border-radius:4px; cursor:pointer; }
 .online:hover { background: rgba(114, 137, 218, 0.2); }
 input, button { padding:5px; margin:3px; border:none; }
-button { background:#7289da; color:white; cursor:pointer; }
+button { background:#7289da; color:white; cursor:pointer; touch-action: manipulation; }
 button:hover { background:#5b6eae; }
 
 /* MOBILE RESPONSIVE */
@@ -35,9 +35,9 @@ button:hover { background:#5b6eae; }
 
 <div id="channels">
 <h4>Channels</h4>
-<div onclick="switchChannel('general')" class="channel"># general</div>
-<div onclick="switchChannel('random')" class="channel"># random</div>
-<div onclick="switchChannel('dev')" class="channel"># dev</div>
+<div class="channel" data-channel="general"># general</div>
+<div class="channel" data-channel="random"># random</div>
+<div class="channel" data-channel="dev"># dev</div>
 </div>
 
 <div id="main">
@@ -45,7 +45,7 @@ button:hover { background:#5b6eae; }
 <div id="chatHeader"></div>
 <div id="chat"></div>
 <input id="msg" placeholder="Message">
-<button onclick="backToChannel()">Back</button>
+<button type="button" id="backBtn">Back</button>
 </div>
 
 <div id="users">
@@ -94,12 +94,16 @@ function showLogin() {
   loginDiv.innerHTML = `
     <input id="email" placeholder="Email">
     <input id="password" type="password" placeholder="Password">
-    <button onclick="login()">Login</button>
-    <button onclick="register()">Register</button>
+    <button type="button" id="loginBtn">Login</button>
+    <button type="button" id="registerBtn">Register</button>
     <hr>
-    <button onclick="guestLogin()">Continue as Guest</button>
+    <button type="button" id="guestBtn">Continue as Guest</button>
     <small style="color:#aaa;">Hint: You can chat without logging in as a Guest</small>
   `;
+
+  document.getElementById("loginBtn").addEventListener("click", login);
+  document.getElementById("registerBtn").addEventListener("click", register);
+  document.getElementById("guestBtn").addEventListener("click", guestLogin);
 }
 
 // REGISTER
@@ -143,6 +147,7 @@ function guestLogin(){
   set(userRef, {email: guestName, color: guestColor});
   userRef.onDisconnect().remove();
   loginDiv.innerHTML = `Logged in as ${guestName} (Guest)`;
+  goOnline();
 }
 
 // ================= AUTH STATE =================
@@ -176,12 +181,17 @@ function renderOnline() {
     div.textContent = u.email;
     div.style.color = u.color;
     div.className="online";
-    if(currentUser.uid!==uid) div.onclick = ()=>openDM(uid,u.email);
+    if(currentUser.uid!==uid) div.addEventListener("click", ()=>openDM(uid,u.email));
     list.appendChild(div);
   });
 }
 
 // ================= CHANNELS =================
+document.querySelectorAll(".channel").forEach(ch=>{
+  ch.addEventListener("click", ()=>switchChannel(ch.dataset.channel));
+});
+document.getElementById("backBtn").addEventListener("click", backToChannel);
+
 function switchChannel(c){ channel=c; dmUser=null; document.getElementById("chatHeader").textContent=""; sendSystem(`Switched to #${c}`); fetchMessages(); }
 
 // ================= CHAT =================
