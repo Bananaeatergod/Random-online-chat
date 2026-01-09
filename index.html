@@ -12,7 +12,7 @@ body { font-family:Arial; margin:0; background:#36393f; color:white; display:fle
 .message { margin-bottom:6px; word-break: break-word; }
 .username { font-weight:bold; }
 .system { color:#faa61a; font-style:italic; }
-.channel { cursor:pointer; margin-bottom:5px; }
+.channel { cursor:pointer; margin-bottom:5px; display:flex; justify-content:space-between; align-items:center; }
 .channel:hover { color:#7289da; }
 .online-user { font-weight:bold; padding:2px 4px; border-radius:4px; cursor:pointer; display:flex; align-items:center; }
 .online-user:hover { background: rgba(114, 137, 218, 0.2); }
@@ -23,6 +23,11 @@ button:hover { background:#5b6eae; }
 #mentionList div{ padding:3px 5px; cursor:pointer; }
 #mentionList div:hover{ background:#7289da; }
 .highlight{ background:#7289da; }
+
+#spamPopup { position: fixed; top:50%; left:50%; transform:translate(-50%,-50%); background:#202225; padding:20px; border:2px solid #7289da; display:none; z-index:999; text-align:center; }
+#spamBar { width:200px; height:10px; background:black; margin:10px auto; }
+#spamBarFill { width:0%; height:100%; background:#7289da; }
+
 @media (max-width: 600px){
   body { flex-direction: column; }
   #channels, #users { width: 100%; height: 60px; display: flex; overflow-x: auto; padding:5px; }
@@ -53,6 +58,12 @@ button:hover { background:#5b6eae; }
 <div id="users">
 <h4>Users</h4>
 <div id="userList"></div>
+</div>
+
+<div id="spamPopup">
+  <div>RELAX DUDE, DON’T SPAM 👍</div>
+  <div id="spamBar"><div id="spamBarFill"></div></div>
+  <button id="spamOkBtn" disabled>OKAY</button>
 </div>
 
 <script type="module">
@@ -138,7 +149,20 @@ function guestLogin(){
 
 // ================= AUTH STATE =================
 onAuthStateChanged(auth,user=>{
-  if(user){ currentUser=user; loginDiv.innerHTML=`Logged in as ${user.email}`; goOnline(); renderChannels(); renderUsers(); } 
+  if(user){
+    currentUser=user;
+    // Ensure user has a color
+    get(ref(db,'users/'+user.uid)).then(snap=>{
+      const info = snap.val();
+      if(!info.color){
+        const color = randomColor();
+        userColors[user.uid] = color;
+        set(ref(db,'users/'+user.uid+'/color'), color);
+      } else { userColors[user.uid] = info.color; }
+    });
+    loginDiv.innerHTML=`Logged in as ${user.email}`;
+    goOnline(); renderChannels(); renderUsers();
+  } 
   else if(!currentUser?.guest) currentUser=null;
 });
 
@@ -163,16 +187,17 @@ async function renderUsers(){
   const rendered = new Set();
 
   Object.entries(allUsers).sort((a,b)=>a[1].email.localeCompare(b[1].email)).forEach(([uid,u])=>{
-    if(!onlineUIDs.has(uid)) return;
+    if(u.guest) return;
     if(rendered.has(uid)) return;
     rendered.add(uid);
 
     const div=document.createElement("div");
     div.className="online-user";
+
     const status=document.createElement("span");
     status.style.display="inline-block"; status.style.width="10px"; status.style.height="10px";
     status.style.marginRight="6px"; status.style.borderRadius="50%";
-    status.style.backgroundColor="green";
+    status.style.backgroundColor = onlineUIDs.has(uid) ? "green" : "red";
     div.prepend(status);
 
     let displayName = u.email;
@@ -195,10 +220,29 @@ async function fetchChannels(){
 }
 async function renderChannels(){
   channelListDiv.innerHTML="";
-  channels.forEach(ch=>{
+  channels.forEach(async ch=>{
     const div=document.createElement("div");
     div.textContent="# "+ch; div.className="channel";
+
+    // click to switch
     div.onclick=()=>switchChannel(ch);
+
+    // delete button for admins
+    if(currentUser && !currentUser.guest){
+      const snap = await get(ref(db,'users/'+currentUser.uid));
+      if(snap.val()?.admin){
+        const delBtn = document.createElement("button");
+        delBtn.textContent="✖";
+        delBtn.style.marginLeft="5px";
+        delBtn.onclick=async (e)=>{
+          e.stopPropagation(); 
+          await remove(ref(db,'channels/'+ch));
+          sendAdminAction(`DELETED CHANNEL "${ch}"`);
+        };
+        div.appendChild(delBtn);
+      }
+    }
+
     channelListDiv.appendChild(div);
   });
   if(currentUser && !currentUser.guest){
@@ -216,8 +260,6 @@ async function addChannel(){
   await set(ref(db,'channels/'+name),true);
   sendAdminAction(`CREATED CHANNEL "${name}"`);
 }
-
-// Listen for channel updates in real time
 onValue(ref(db,'channels'),snap=>{ fetchChannels(); });
 
 // ================= CHAT =================
@@ -227,6 +269,10 @@ const msgInput=document.getElementById("msg");
 const mentionList=document.getElementById("mentionList");
 const pingSound=document.getElementById("pingSound");
 
+const spamPopup=document.getElementById("spamPopup");
+const spamBarFill=document.getElementById("spamBarFill");
+const spamOkBtn=document.getElementById("spamOkBtn");
+
 msgInput.addEventListener("input",updateMentionList);
 msgInput.addEventListener("keydown",e=>{if(e.key==="Enter") sendMessage();});
 document.getElementById("backBtn").onclick=backToChannel;
@@ -234,7 +280,7 @@ document.getElementById("backBtn").onclick=backToChannel;
 async function sendMessage(){
   if(!currentUser) return alert("Login first");
   const now=Date.now();
-  if(now - lastMessageTime < 5000){ alert("You are on cooldown for 5 seconds!"); return; }
+  if(now - lastMessageTime < 5000){ showSpamPopup(); return; }
   lastMessageTime = now;
 
   // Admin command: /clear
@@ -334,12 +380,28 @@ async function updateMentionList(){
   mentionList.style.display="block";
 }
 
+// ================= SPAM POPUP =================
+function showSpamPopup(){
+  spamPopup.style.display="block";
+  spamBarFill.style.width="0%";
+  spamOkBtn.disabled=true;
+  let start = Date.now();
+  let interval = setInterval(()=>{
+    let elapsed = (Date.now()-start)/5000;
+    if(elapsed>=1){ elapsed=1; spamOkBtn.disabled=false; clearInterval(interval); }
+    spamBarFill.style.width=(elapsed*100)+"%";
+  },50);
+}
+
 // ================= UTIL =================
 function randomColor(){ return `hsl(${Math.random()*360},70%,70%)`; }
 
 // ================= INITIALIZATION =================
 fetchChannels();
 renderUsers();
+
+// Spam OKAY button
+spamOkBtn.onclick=()=>{ spamPopup.style.display="none"; };
 </script>
 </body>
 </html>
