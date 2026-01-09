@@ -2,11 +2,11 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Firebase Discord Lite 3.0</title>
+<title>Firebase Discord Lite 4.1</title>
 <style>
 body { font-family:Arial; margin:0; background:#36393f; color:white; display:flex; height:100vh; }
 #channels, #users { width:180px; background:#2f3136; padding:10px; overflow-y:auto; -webkit-overflow-scrolling: touch; }
-#main { flex:1; display:flex; flex-direction:column; }
+#main { flex:1; display:flex; flex-direction:column; position: relative; }
 #chatHeader { padding:5px 10px; background:#202225; font-weight:bold; }
 #chat { flex:1; padding:10px; overflow-y:auto; }
 .message { margin-bottom:6px; }
@@ -20,14 +20,16 @@ body { font-family:Arial; margin:0; background:#36393f; color:white; display:fle
 input, button { padding:5px; margin:3px; border:none; }
 button { background:#7289da; color:white; cursor:pointer; touch-action: manipulation; }
 button:hover { background:#5b6eae; }
-
-/* MOBILE RESPONSIVE */
+#mentionList { position:absolute; bottom:40px; left:10px; background:#2f3136; color:white; border:1px solid #7289da; max-height:120px; overflow-y:auto; display:none; z-index:10; }
+#mentionList div{ padding:3px 5px; cursor:pointer; }
+#mentionList div:hover{ background:#7289da; }
+.highlight{ background:#7289da; }
 @media (max-width: 600px){
   body { flex-direction: column; }
   #channels, #users { width: 100%; height: 60px; display: flex; overflow-x: auto; padding:5px; }
   #channels div, #users div { margin-right: 10px; white-space: nowrap; }
-  #main { flex: 1; }
-  #chat { flex: 1; }
+  #main { flex:1; }
+  #chat { flex:1; }
 }
 </style>
 </head>
@@ -43,8 +45,10 @@ button:hover { background:#5b6eae; }
 <div id="login"></div>
 <div id="chatHeader"></div>
 <div id="chat"></div>
+<div id="mentionList"></div>
 <input id="msg" placeholder="Message">
 <button type="button" id="backBtn">Back</button>
+<audio id="pingSound" src="https://www.soundjay.com/button/sounds/button-3.mp3" preload="auto"></audio>
 </div>
 
 <div id="users">
@@ -53,13 +57,12 @@ button:hover { background:#5b6eae; }
 </div>
 
 <script type="module">
-// ================= IMPORTS =================
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.7.0/firebase-app.js";
 import { getAnalytics } from "https://www.gstatic.com/firebasejs/12.7.0/firebase-analytics.js";
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.7.0/firebase-auth.js";
 import { getDatabase, ref, set, push, onValue, remove, get } from "https://www.gstatic.com/firebasejs/12.7.0/firebase-database.js";
 
-// ================= FIREBASE CONFIG =================
+// ================= FIREBASE =================
 const firebaseConfig = {
   apiKey: "AIzaSyAr2WD_WZydtVfl96CVXj0xzPhzf6UB9MI",
   authDomain: "online-chat-536f1.firebaseapp.com",
@@ -70,257 +73,200 @@ const firebaseConfig = {
   appId: "1:898340850426:web:c92bc391593b4624e61743",
   measurementId: "G-7TFSRM2WB4"
 };
-
-// ================= INITIALIZE =================
 const app = initializeApp(firebaseConfig);
 const analytics = getAnalytics(app);
 const auth = getAuth(app);
 const db = getDatabase(app);
 
 // ================= STATE =================
-let currentUser = null;
-let channel = "general";
-let dmUser = null;
-let userColors = {};
-let adminEmails = ["ethanq.au@gmail.com"];
-let onlineUsers = {};
-let channels = [];
+let currentUser=null, channel="general", dmUser=null, userColors={}, onlineUsers={}, channels=[];
 
-// ================= LOGIN/REGISTER/GUEST =================
-const loginDiv = document.getElementById("login");
+// ================= LOGIN =================
+const loginDiv=document.getElementById("login");
 showLogin();
-
-function showLogin() {
-  loginDiv.innerHTML = `
+function showLogin(){
+  loginDiv.innerHTML=`
     <input id="email" placeholder="Email">
     <input id="password" type="password" placeholder="Password">
-    <button type="button" id="loginBtn">Login</button>
-    <button type="button" id="registerBtn">Register</button>
+    <button id="loginBtn">Login</button>
+    <button id="registerBtn">Register</button>
     <hr>
-    <button type="button" id="guestBtn">Continue as Guest</button>
+    <button id="guestBtn">Continue as Guest</button>
     <small style="color:#aaa;">Hint: You can chat without logging in as a Guest</small>
   `;
-
-  document.getElementById("loginBtn").addEventListener("click", login);
-  document.getElementById("registerBtn").addEventListener("click", register);
-  document.getElementById("guestBtn").addEventListener("click", guestLogin);
+  document.getElementById("loginBtn").onclick=login;
+  document.getElementById("registerBtn").onclick=register;
+  document.getElementById("guestBtn").onclick=guestLogin;
 }
-
-// REGISTER
-async function register() {
-  const email = document.getElementById("email").value;
-  const password = document.getElementById("password").value;
-  try {
-    const userCred = await createUserWithEmailAndPassword(auth, email, password);
-    const color = `hsl(${Math.random()*360},70%,70%)`;
-    userColors[userCred.user.uid] = color;
-    await set(ref(db, 'users/' + userCred.user.uid), {
-      email,
-      color,
-      admin: adminEmails.includes(email)
-    });
+async function register(){
+  const email=document.getElementById("email").value;
+  const password=document.getElementById("password").value;
+  try{
+    const userCred=await createUserWithEmailAndPassword(auth,email,password);
+    const color=`hsl(${Math.random()*360},70%,70%)`;
+    userColors[userCred.user.uid]=color;
+    await set(ref(db,'users/'+userCred.user.uid),{email,color,admin:(email==="ethanq.au@gmail.com" || email==="bananaeatergod@outlook.com")});
     alert("Account created! Login now.");
-  } catch(e) { alert("Error: " + e.message); }
+  }catch(e){alert(e.message);}
 }
-
-// LOGIN
-async function login() {
-  const email = document.getElementById("email").value;
-  const password = document.getElementById("password").value;
-  try {
-    const userCred = await signInWithEmailAndPassword(auth, email, password);
-    const uid = userCred.user.uid;
-    const snap = await get(ref(db, 'users/' + uid));
-    const info = snap.val();
+async function login(){
+  const email=document.getElementById("email").value;
+  const password=document.getElementById("password").value;
+  try{
+    const userCred=await signInWithEmailAndPassword(auth,email,password);
+    const uid=userCred.user.uid;
+    const snap=await get(ref(db,'users/'+uid));
+    const info=snap.val();
     if(info?.banned) return alert("You are banned.");
-    if(info?.timeout && Date.now() < info.timeout) return alert("You are timed out.");
-  } catch(e) { alert("Error: " + e.message); }
+    if(info?.timeout && Date.now()<info.timeout) return alert("You are timed out.");
+  }catch(e){alert(e.message);}
 }
-
-// GUEST LOGIN
 function guestLogin(){
-  const guestName = "Guest_" + Math.floor(Math.random()*9000+1000);
-  const guestColor = `hsl(${Math.random()*360},70%,70%)`;
-  currentUser = { uid:"guest_"+Date.now(), email:guestName, guest:true };
-  userColors[currentUser.uid] = guestColor;
-  loginDiv.innerHTML = `Logged in as ${guestName} (Guest)`;
+  const guestName="Guest_"+Math.floor(Math.random()*9000+1000);
+  const guestColor=`hsl(${Math.random()*360},70%,70%)`;
+  currentUser={uid:"guest_"+Date.now(),email:guestName,guest:true};
+  userColors[currentUser.uid]=guestColor;
+  loginDiv.innerHTML=`Logged in as ${guestName} (Guest)`;
   goOnline();
 }
 
 // ================= AUTH STATE =================
-onAuthStateChanged(auth, user => {
-  if(user){
-    currentUser = user;
-    loginDiv.innerHTML = `Logged in as ${user.email}`;
-    goOnline();
-  } else if(!currentUser?.guest){
-    currentUser = null;
-  }
+onAuthStateChanged(auth,user=>{
+  if(user){ currentUser=user; loginDiv.innerHTML=`Logged in as ${user.email}`; goOnline(); renderChannels(); renderUsers(); } 
+  else if(!currentUser?.guest) currentUser=null;
 });
 
 // ================= ONLINE USERS =================
-async function goOnline() {
+async function goOnline(){
   if(!currentUser) return;
   if(!currentUser.guest){
-    const userRef = ref(db, "online/" + currentUser.uid);
-    set(userRef, {email: currentUser.email, color: userColors[currentUser.uid]});
+    const userRef=ref(db,"online/"+currentUser.uid);
+    set(userRef,{email:currentUser.email,color:userColors[currentUser.uid]});
     userRef.onDisconnect().remove();
   }
-  onValue(ref(db, "online"), snap=>{
-    onlineUsers = snap.val()||{};
-    renderUsers();
-  });
+  onValue(ref(db,"online"),snap=>{ onlineUsers=snap.val()||{}; renderUsers(); });
 }
 
-// ================= RENDER USERS =================
-async function renderUsers() {
-  const list = document.getElementById("userList");
-  list.innerHTML = "";
-
-  const usersSnap = await get(ref(db,'users'));
-  const allUsers = usersSnap.val() || {};
-
-  const onlineUIDs = new Set(Object.keys(onlineUsers));
-
-  // Sort alphabetically
-  const sortedUsers = Object.entries(allUsers).sort((a,b) => a[1].email.localeCompare(b[1].email));
-
-  sortedUsers.forEach(([uid,u])=>{
-    const div = document.createElement("div");
-    div.textContent = u.email;
-    div.style.color = u.color || "#fff";
-    div.className = "online-user";
-
-    const status = document.createElement("span");
-    status.style.display = "inline-block";
-    status.style.width = "10px";
-    status.style.height = "10px";
-    status.style.marginRight = "6px";
-    status.style.borderRadius = "50%";
-    status.style.backgroundColor = onlineUIDs.has(uid) ? "green" : "red";
+// ================= USERS SIDEBAR =================
+async function renderUsers(){
+  const list=document.getElementById("userList");
+  list.innerHTML="";
+  const usersSnap=await get(ref(db,'users'));
+  const allUsers=usersSnap.val()||{};
+  const onlineUIDs=new Set(Object.keys(onlineUsers));
+  Object.entries(allUsers).sort((a,b)=>a[1].email.localeCompare(b[1].email)).forEach(([uid,u])=>{
+    const div=document.createElement("div");
+    div.className="online-user";
+    const status=document.createElement("span");
+    status.style.display="inline-block"; status.style.width="10px"; status.style.height="10px";
+    status.style.marginRight="6px"; status.style.borderRadius="50%";
+    status.style.backgroundColor=onlineUIDs.has(uid)?"green":"red";
     div.prepend(status);
-
-    if(currentUser?.uid !== uid) div.addEventListener("click", ()=>openDM(uid,u.email));
+    div.append(u.email);
+    if(!currentUser?.guest && currentUser?.uid!==uid) div.onclick=()=>openDM(uid,u.email);
     list.appendChild(div);
   });
 }
 
 // ================= CHANNELS =================
-const channelListDiv = document.getElementById("channelList");
-const addChannelDiv = document.getElementById("addChannelDiv");
-
-async function fetchChannels() {
-  const snap = await get(ref(db,'channels'));
-  const chs = snap.val() || {general:true, random:true, dev:true};
-  channels = Object.keys(chs);
+const channelListDiv=document.getElementById("channelList");
+const addChannelDiv=document.getElementById("addChannelDiv");
+async function fetchChannels(){
+  const snap=await get(ref(db,'channels'));
+  const chs=snap.val()||{general:true,random:true,dev:true};
+  channels=Object.keys(chs);
   renderChannels();
 }
-
-function renderChannels(){
-  channelListDiv.innerHTML = "";
+async function renderChannels(){
+  channelListDiv.innerHTML="";
   channels.forEach(ch=>{
-    const div = document.createElement("div");
-    div.textContent = "# " + ch;
-    div.className = "channel";
-    div.addEventListener("click", ()=>switchChannel(ch));
+    const div=document.createElement("div");
+    div.textContent="# "+ch; div.className="channel";
+    div.onclick=()=>switchChannel(ch);
     channelListDiv.appendChild(div);
   });
-
-  // Admin: Add Channel
-  if(currentUser && adminEmails.includes(currentUser.email)){
-    addChannelDiv.innerHTML = `
-      <input id="newChannel" placeholder="New channel name">
-      <button id="addChBtn">Add</button>
-    `;
-    document.getElementById("addChBtn").addEventListener("click", addChannel);
-  } else addChannelDiv.innerHTML = "";
+  if(currentUser && !currentUser.guest){
+    const snap=await get(ref(db,'users/'+currentUser.uid));
+    const info=snap.val();
+    if(info?.admin){
+      addChannelDiv.innerHTML=`<input id="newChannel" placeholder="New channel name"><button id="addChBtn">Add</button>`;
+      document.getElementById("addChBtn").onclick=addChannel;
+    } else addChannelDiv.innerHTML="";
+  } else addChannelDiv.innerHTML="";
 }
-
 async function addChannel(){
-  const name = document.getElementById("newChannel").value.trim();
+  const name=document.getElementById("newChannel").value.trim();
   if(!name) return;
-  await set(ref(db,'channels/'+name), true);
-  channels.push(name);
-  renderChannels();
+  await set(ref(db,'channels/'+name),true);
 }
 
-// Initial fetch channels
-fetchChannels();
+// Listen for channel updates in real time
+onValue(ref(db,'channels'),snap=>{ fetchChannels(); });
 
 // ================= CHAT =================
-const chatDiv = document.getElementById("chat");
-const chatHeader = document.getElementById("chatHeader");
-const msgInput = document.getElementById("msg");
+const chatDiv=document.getElementById("chat");
+const chatHeader=document.getElementById("chatHeader");
+const msgInput=document.getElementById("msg");
+const mentionList=document.getElementById("mentionList");
+const pingSound=document.getElementById("pingSound");
+
+msgInput.addEventListener("input",updateMentionList);
+msgInput.addEventListener("keydown",e=>{if(e.key==="Enter") sendMessage();});
+document.getElementById("backBtn").onclick=backToChannel;
 
 async function sendMessage(){
   if(!currentUser) return alert("Login first");
-  const uid = currentUser.uid;
-  const text = msgInput.value.trim();
-  if(!text) return;
-
+  const text=msgInput.value.trim(); if(!text) return;
+  if(text.includes("@everyone") && !currentUser.guest) pingSound.play();
   push(ref(db,"messages/"+channel),{
-    uid, email:currentUser.email, text,
-    color:userColors[uid]||"#fff",
-    time: new Date().toLocaleTimeString()
+    uid:currentUser.uid,email:currentUser.email,text,
+    color:userColors[currentUser.uid]||"#fff",
+    time:new Date().toLocaleTimeString()
   });
-  msgInput.value="";
+  msgInput.value=""; mentionList.style.display="none";
 }
-
 async function fetchMessages(){
-  onValue(ref(db,"messages/"+channel), snap=>{
+  onValue(ref(db,"messages/"+channel),snap=>{
     chatDiv.innerHTML="";
-    const msgs = snap.val()||{};
+    const msgs=snap.val()||{};
     Object.values(msgs).forEach(m=>{
-      const div = document.createElement("div");
-      div.className="message";
-      div.innerHTML=`<span class="username" style="color:${m.color}">${m.email}</span> <small>${m.time}</small>: ${m.text}`;
+      const div=document.createElement("div"); div.className="message";
+      let t=m.text.replace(/@everyone/g,'<span class="highlight">@everyone</span>');
+      div.innerHTML=`<span class="username" style="color:${m.color}">${m.email}</span> <small>${m.time}</small>: ${t}`;
       chatDiv.appendChild(div);
     });
-    chatDiv.scrollTop = chatDiv.scrollHeight;
+    chatDiv.scrollTop=chatDiv.scrollHeight;
   });
 }
 fetchMessages();
 
-function switchChannel(c){
-  channel=c; dmUser=null; chatHeader.textContent="";
-  sendLocalSystem(`Switched to #${c}`);
-  fetchMessages();
-}
+function switchChannel(c){ channel=c; dmUser=null; chatHeader.textContent=""; sendLocalSystem(`Switched to #${c}`); fetchMessages(); }
+function openDM(targetUid,targetEmail){ dmUser=targetUid; chatHeader.textContent="DM with "+targetEmail; }
+function backToChannel(){ dmUser=null; chatHeader.textContent=""; fetchMessages(); }
+function sendLocalSystem(text){ const div=document.createElement("div"); div.className="message system"; div.innerHTML=`<span class="username" style="color:#faa61a">SYSTEM</span>: ${text}`; chatDiv.appendChild(div); chatDiv.scrollTop=chatDiv.scrollHeight; }
 
-// ================= DM =================
-function openDM(targetUid,targetEmail){
-  dmUser = targetUid;
-  chatHeader.textContent = "DM with " + targetEmail;
-  const path = [currentUser.uid, dmUser].sort().join("_");
-  onValue(ref(db,"dm/"+path),snap=>{
-    chatDiv.innerHTML="";
-    const msgs = snap.val()||{};
-    Object.values(msgs).forEach(m=>{
-      const div = document.createElement("div");
-      div.className="message";
-      div.innerHTML=`<span class="username" style="color:${m.color}">${m.email}</span> <small>${m.time}</small>: ${m.text}`;
-      chatDiv.appendChild(div);
-    });
-    chatDiv.scrollTop = chatDiv.scrollHeight;
+// ================= MENTION LIST =================
+async function updateMentionList(){
+  const val=msgInput.value; 
+  const atIndex=val.lastIndexOf("@"); 
+  if(atIndex===-1){ mentionList.style.display="none"; return; }
+  const query=val.slice(atIndex+1).toLowerCase();
+  const usersSnap=await get(ref(db,'users'));
+  const allUsers=usersSnap.val()||{};
+  let matches=["everyone"];
+  matches=matches.concat(Object.values(allUsers).map(u=>u.email).filter(e=>e.toLowerCase().includes(query)));
+  mentionList.innerHTML="";
+  matches.forEach(u=>{
+    const div=document.createElement("div"); div.textContent="@"+u;
+    div.onclick=()=>{ msgInput.value=val.slice(0,atIndex)+"@"+u+" "; mentionList.style.display="none"; msgInput.focus(); };
+    mentionList.appendChild(div);
   });
+  mentionList.style.display="block";
 }
 
-function backToChannel(){
-  dmUser = null;
-  chatHeader.textContent = "";
-  fetchMessages();
-}
-
-// ================= LOCAL SYSTEM =================
-function sendLocalSystem(text){
-  const div = document.createElement("div");
-  div.className = "message system";
-  div.innerHTML = `<span class="username" style="color:#faa61a">SYSTEM</span>: ${text}`;
-  chatDiv.appendChild(div);
-  chatDiv.scrollTop = chatDiv.scrollHeight;
-}
-
-msgInput.addEventListener("keydown", e=>{if(e.key==="Enter") sendMessage();});
+// ================= INITIALIZATION =================
+fetchChannels();
+renderUsers();
 </script>
 </body>
 </html>
