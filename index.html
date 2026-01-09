@@ -83,32 +83,26 @@ let currentUser = null;
 let channel = "general";
 let dmUser = null;
 let userColors = {};
-let adminEmails = ["ethanq.au@gmail.com"]; // YOU ARE ADMIN
+let adminEmails = ["ethanq.au@gmail.com"];
 let onlineUsers = {};
 
-// ================= LOGIN/REGISTER =================
+// ================= LOGIN/REGISTER/GUEST =================
 const loginDiv = document.getElementById("login");
+showLogin();
+
 function showLogin() {
   loginDiv.innerHTML = `
     <input id="email" placeholder="Email">
     <input id="password" type="password" placeholder="Password">
     <button onclick="login()">Login</button>
-    <button onclick="register()">Register</button>`;
+    <button onclick="register()">Register</button>
+    <hr>
+    <button onclick="guestLogin()">Continue as Guest</button>
+    <small style="color:#aaa;">Hint: You can chat without logging in as a Guest</small>
+  `;
 }
 
-async function login() {
-  const email = document.getElementById("email").value;
-  const password = document.getElementById("password").value;
-  try {
-    const userCred = await signInWithEmailAndPassword(auth, email, password);
-    const uid = userCred.user.uid;
-    const snap = await get(ref(db, 'users/' + uid));
-    const info = snap.val();
-    if(info?.banned) return alert("You are banned.");
-    if(info?.timeout && Date.now() < info.timeout) return alert("You are timed out.");
-  } catch(e) { alert(e.message); }
-}
-
+// REGISTER
 async function register() {
   const email = document.getElementById("email").value;
   const password = document.getElementById("password").value;
@@ -122,7 +116,33 @@ async function register() {
       admin: adminEmails.includes(email)
     });
     alert("Account created! Login now.");
-  } catch(e) { alert(e.message); }
+  } catch(e) { alert("Error: " + e.message); }
+}
+
+// LOGIN
+async function login() {
+  const email = document.getElementById("email").value;
+  const password = document.getElementById("password").value;
+  try {
+    const userCred = await signInWithEmailAndPassword(auth, email, password);
+    const uid = userCred.user.uid;
+    const snap = await get(ref(db, 'users/' + uid));
+    const info = snap.val();
+    if(info?.banned) return alert("You are banned.");
+    if(info?.timeout && Date.now() < info.timeout) return alert("You are timed out.");
+  } catch(e) { alert("Error: " + e.message); }
+}
+
+// GUEST LOGIN
+function guestLogin(){
+  const guestName = "Guest_" + Math.floor(Math.random()*9000+1000);
+  const guestColor = `hsl(${Math.random()*360},70%,70%)`;
+  currentUser = { uid:"guest_"+Date.now(), email:guestName, guest:true };
+  userColors[currentUser.uid] = guestColor;
+  const userRef = ref(db, "online/" + currentUser.uid);
+  set(userRef, {email: guestName, color: guestColor});
+  userRef.onDisconnect().remove();
+  loginDiv.innerHTML = `Logged in as ${guestName} (Guest)`;
 }
 
 // ================= AUTH STATE =================
@@ -131,9 +151,8 @@ onAuthStateChanged(auth, user => {
     currentUser = user;
     loginDiv.innerHTML = `Logged in as ${user.email}`;
     goOnline();
-  } else {
+  } else if(!currentUser?.guest){
     currentUser = null;
-    showLogin();
   }
 });
 
@@ -173,11 +192,12 @@ const msgInput = document.getElementById("msg");
 async function sendMessage(){
   if(!currentUser) return alert("Login first");
   const uid = currentUser.uid;
-  const userSnap = await get(ref(db, 'users/'+uid));
-  const info = userSnap.val();
-  if(info?.banned) return alert("You are banned.");
-  if(info?.timeout && Date.now() < info.timeout) return alert("You are timed out.");
-
+  if(!currentUser.guest){
+    const userSnap = await get(ref(db, 'users/'+uid));
+    const info = userSnap.val();
+    if(info?.banned) return alert("You are banned.");
+    if(info?.timeout && Date.now() < info.timeout) return alert("You are timed out.");
+  }
   const text = msgInput.value.trim();
   if(!text) return;
   const isAdmin = adminEmails.includes(currentUser.email);
@@ -219,7 +239,7 @@ async function sendMessage(){
 // ================= ADMIN FUNCTIONS =================
 async function banUser(email){
   const usersSnap = await get(ref(db,'users'));
-  const users = usersSnap.val();
+  const users = usersSnap.val()||{};
   for(const [uid, u] of Object.entries(users)){
     if(u.email===email){
       await set(ref(db,'users/'+uid+'/banned'), true);
@@ -230,7 +250,7 @@ async function banUser(email){
 
 async function timeoutUser(email, seconds){
   const usersSnap = await get(ref(db,'users'));
-  const users = usersSnap.val();
+  const users = usersSnap.val()||{};
   for(const [uid,u] of Object.entries(users)){
     if(u.email===email){
       const until = Date.now() + seconds*1000;
