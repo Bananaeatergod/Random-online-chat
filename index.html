@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Firebase Discord Lite 2.2 - Online/Offline Sidebar</title>
+<title>Firebase Discord Lite 3.0</title>
 <style>
 body { font-family:Arial; margin:0; background:#36393f; color:white; display:flex; height:100vh; }
 #channels, #users { width:180px; background:#2f3136; padding:10px; overflow-y:auto; -webkit-overflow-scrolling: touch; }
@@ -15,7 +15,7 @@ body { font-family:Arial; margin:0; background:#36393f; color:white; display:fle
 .admin { color:#f04747; }
 .channel { cursor:pointer; margin-bottom:5px; }
 .channel:hover { color:#7289da; }
-.online-user { font-weight:bold; padding:6px 4px; border-radius:4px; cursor:pointer; }
+.online-user { font-weight:bold; padding:2px 4px; border-radius:4px; cursor:pointer; display:flex; align-items:center; }
 .online-user:hover { background: rgba(114, 137, 218, 0.2); }
 input, button { padding:5px; margin:3px; border:none; }
 button { background:#7289da; color:white; cursor:pointer; touch-action: manipulation; }
@@ -35,9 +35,8 @@ button:hover { background:#5b6eae; }
 
 <div id="channels">
 <h4>Channels</h4>
-<div class="channel" data-channel="general"># general</div>
-<div class="channel" data-channel="random"># random</div>
-<div class="channel" data-channel="dev"># dev</div>
+<div id="channelList"></div>
+<div id="addChannelDiv" style="margin-top:10px;"></div>
 </div>
 
 <div id="main">
@@ -85,6 +84,7 @@ let dmUser = null;
 let userColors = {};
 let adminEmails = ["ethanq.au@gmail.com"];
 let onlineUsers = {};
+let channels = [];
 
 // ================= LOGIN/REGISTER/GUEST =================
 const loginDiv = document.getElementById("login");
@@ -143,9 +143,6 @@ function guestLogin(){
   const guestColor = `hsl(${Math.random()*360},70%,70%)`;
   currentUser = { uid:"guest_"+Date.now(), email:guestName, guest:true };
   userColors[currentUser.uid] = guestColor;
-  const userRef = ref(db, "online/" + currentUser.uid);
-  set(userRef, {email: guestName, color: guestColor});
-  userRef.onDisconnect().remove();
   loginDiv.innerHTML = `Logged in as ${guestName} (Guest)`;
   goOnline();
 }
@@ -161,71 +158,94 @@ onAuthStateChanged(auth, user => {
   }
 });
 
-// ================= ONLINE/OFFLINE USERS =================
+// ================= ONLINE USERS =================
 async function goOnline() {
   if(!currentUser) return;
-  const userRef = ref(db, "online/" + currentUser.uid);
-  set(userRef, {email: currentUser.email, color: userColors[currentUser.uid]});
-  userRef.onDisconnect().remove();
+  if(!currentUser.guest){
+    const userRef = ref(db, "online/" + currentUser.uid);
+    set(userRef, {email: currentUser.email, color: userColors[currentUser.uid]});
+    userRef.onDisconnect().remove();
+  }
   onValue(ref(db, "online"), snap=>{
     onlineUsers = snap.val()||{};
     renderUsers();
   });
 }
 
+// ================= RENDER USERS =================
 async function renderUsers() {
   const list = document.getElementById("userList");
   list.innerHTML = "";
 
-  // Get all registered users
   const usersSnap = await get(ref(db,'users'));
   const allUsers = usersSnap.val() || {};
 
-  const onlineDiv = document.createElement("div");
-  const offlineDiv = document.createElement("div");
-  onlineDiv.innerHTML = "<b>ONLINE</b><br>";
-  offlineDiv.innerHTML = "<b>OFFLINE</b><br>";
-
   const onlineUIDs = new Set(Object.keys(onlineUsers));
 
-  // Registered users
-  Object.entries(allUsers).forEach(([uid,u])=>{
+  // Sort alphabetically
+  const sortedUsers = Object.entries(allUsers).sort((a,b) => a[1].email.localeCompare(b[1].email));
+
+  sortedUsers.forEach(([uid,u])=>{
     const div = document.createElement("div");
     div.textContent = u.email;
     div.style.color = u.color || "#fff";
     div.className = "online-user";
+
+    const status = document.createElement("span");
+    status.style.display = "inline-block";
+    status.style.width = "10px";
+    status.style.height = "10px";
+    status.style.marginRight = "6px";
+    status.style.borderRadius = "50%";
+    status.style.backgroundColor = onlineUIDs.has(uid) ? "green" : "red";
+    div.prepend(status);
+
     if(currentUser?.uid !== uid) div.addEventListener("click", ()=>openDM(uid,u.email));
-
-    if(onlineUIDs.has(uid)) onlineDiv.appendChild(div);
-    else offlineDiv.appendChild(div);
+    list.appendChild(div);
   });
-
-  // Guests
-  Object.entries(onlineUsers).forEach(([uid,u])=>{
-    if(uid.startsWith("guest_")) {
-      const div = document.createElement("div");
-      div.textContent = u.email;
-      div.style.color = u.color;
-      div.className = "online-user";
-      onlineDiv.appendChild(div);
-    }
-  });
-
-  list.appendChild(onlineDiv);
-  list.appendChild(offlineDiv);
 }
 
 // ================= CHANNELS =================
-document.querySelectorAll(".channel").forEach(ch=>{
-  ch.addEventListener("click", ()=>switchChannel(ch.dataset.channel));
-});
-document.getElementById("backBtn").addEventListener("click", backToChannel);
+const channelListDiv = document.getElementById("channelList");
+const addChannelDiv = document.getElementById("addChannelDiv");
 
-function switchChannel(c){
-  channel=c; dmUser=null; chatHeader.textContent="";
-  sendLocalSystem(`Switched to #${c}`);
-  fetchMessages();
+async function fetchChannels() {
+  const snap = await get(ref(db,'channels'));
+  const chs = snap.val() || {general:true, random:true, dev:true};
+  channels = Object.keys(chs);
+  renderChannels();
 }
+
+function renderChannels(){
+  channelListDiv.innerHTML = "";
+  channels.forEach(ch=>{
+    const div = document.createElement("div");
+    div.textContent = "# " + ch;
+    div.className = "channel";
+    div.addEventListener("click", ()=>switchChannel(ch));
+    channelListDiv.appendChild(div);
+  });
+
+  // Admin: Add Channel
+  if(currentUser && adminEmails.includes(currentUser.email)){
+    addChannelDiv.innerHTML = `
+      <input id="newChannel" placeholder="New channel name">
+      <button id="addChBtn">Add</button>
+    `;
+    document.getElementById("addChBtn").addEventListener("click", addChannel);
+  } else addChannelDiv.innerHTML = "";
+}
+
+async function addChannel(){
+  const name = document.getElementById("newChannel").value.trim();
+  if(!name) return;
+  await set(ref(db,'channels/'+name), true);
+  channels.push(name);
+  renderChannels();
+}
+
+// Initial fetch channels
+fetchChannels();
 
 // ================= CHAT =================
 const chatDiv = document.getElementById("chat");
@@ -235,108 +255,19 @@ const msgInput = document.getElementById("msg");
 async function sendMessage(){
   if(!currentUser) return alert("Login first");
   const uid = currentUser.uid;
-  if(!currentUser.guest){
-    const userSnap = await get(ref(db, 'users/'+uid));
-    const info = userSnap.val();
-    if(info?.banned) return alert("You are banned.");
-    if(info?.timeout && Date.now() < info.timeout) return alert("You are timed out.");
-  }
   const text = msgInput.value.trim();
   if(!text) return;
-  const isAdmin = adminEmails.includes(currentUser.email);
 
-  if(dmUser){
-    const path = [currentUser.uid, dmUser].sort().join("_");
-    push(ref(db, "dm/" + path),{
-      uid, email: currentUser.email, text,
-      color: userColors[uid]||"#fff",
-      time: new Date().toLocaleTimeString(),
-    });
-  } else {
-    if(text.startsWith("/") && isAdmin){
-      if(text.startsWith("/clear")) remove(ref(db,"messages/"+channel));
-      else if(text.startsWith("/ban ")){
-        const targetEmail = text.split(" ")[1];
-        await banUser(targetEmail);
-      }
-      else if(text.startsWith("/timeout ")){
-        const [_, targetEmail, seconds] = text.split(" ");
-        await timeoutUser(targetEmail, parseInt(seconds));
-      }
-      else if(text.startsWith("/switchchannel ")){
-        switchChannel(text.split(" ")[1]);
-      }
-      sendLocalSystem(`ADMIN: ${text}`);
-    } else {
-      push(ref(db,"messages/"+channel),{
-        uid, email:currentUser.email, text,
-        color:userColors[uid]||"#fff",
-        time:new Date().toLocaleTimeString(),
-        admin:isAdmin
-      });
-    }
-  }
+  push(ref(db,"messages/"+channel),{
+    uid, email:currentUser.email, text,
+    color:userColors[uid]||"#fff",
+    time: new Date().toLocaleTimeString()
+  });
   msgInput.value="";
 }
 
-// ================= ADMIN FUNCTIONS =================
-async function banUser(email){
-  const usersSnap = await get(ref(db,'users'));
-  const users = usersSnap.val()||{};
-  for(const [uid, u] of Object.entries(users)){
-    if(u.email===email){
-      await set(ref(db,'users/'+uid+'/banned'), true);
-      sendLocalSystem(`User ${email} was banned!`);
-    }
-  }
-}
-
-async function timeoutUser(email, seconds){
-  const usersSnap = await get(ref(db,'users'));
-  const users = usersSnap.val()||{};
-  for(const [uid,u] of Object.entries(users)){
-    if(u.email===email){
-      const until = Date.now() + seconds*1000;
-      await set(ref(db,'users/'+uid+'/timeout'), until);
-      sendLocalSystem(`User ${email} timed out for ${seconds} seconds!`);
-    }
-  }
-}
-
-// ================= MESSAGES =================
 async function fetchMessages(){
   onValue(ref(db,"messages/"+channel), snap=>{
-    chatDiv.innerHTML="";
-    const msgs = snap.val()||{};
-    Object.values(msgs).forEach(m=>{
-      const div = document.createElement("div");
-      div.className="message"+(m.admin?" admin":"");
-      if(m.system) div.className+=" system";
-      div.innerHTML=`<span class="username" style="color:${m.color}">${m.admin?"👑":""}${m.email}</span> <small>${m.time}</small>: ${m.text}`;
-      chatDiv.appendChild(div);
-    });
-    chatDiv.scrollTop = chatDiv.scrollHeight;
-  });
-}
-fetchMessages();
-
-// ================= DM FUNCTIONS =================
-function openDM(targetUid, targetEmail){
-  dmUser = targetUid;
-  chatHeader.textContent = "DM with " + targetEmail;
-  fetchDM();
-}
-
-function backToChannel(){
-  dmUser = null;
-  chatHeader.textContent = "";
-  fetchMessages();
-}
-
-function fetchDM(){
-  if(!dmUser || !currentUser) return;
-  const path = [currentUser.uid, dmUser].sort().join("_");
-  onValue(ref(db, "dm/" + path), snap => {
     chatDiv.innerHTML="";
     const msgs = snap.val()||{};
     Object.values(msgs).forEach(m=>{
@@ -347,6 +278,37 @@ function fetchDM(){
     });
     chatDiv.scrollTop = chatDiv.scrollHeight;
   });
+}
+fetchMessages();
+
+function switchChannel(c){
+  channel=c; dmUser=null; chatHeader.textContent="";
+  sendLocalSystem(`Switched to #${c}`);
+  fetchMessages();
+}
+
+// ================= DM =================
+function openDM(targetUid,targetEmail){
+  dmUser = targetUid;
+  chatHeader.textContent = "DM with " + targetEmail;
+  const path = [currentUser.uid, dmUser].sort().join("_");
+  onValue(ref(db,"dm/"+path),snap=>{
+    chatDiv.innerHTML="";
+    const msgs = snap.val()||{};
+    Object.values(msgs).forEach(m=>{
+      const div = document.createElement("div");
+      div.className="message";
+      div.innerHTML=`<span class="username" style="color:${m.color}">${m.email}</span> <small>${m.time}</small>: ${m.text}`;
+      chatDiv.appendChild(div);
+    });
+    chatDiv.scrollTop = chatDiv.scrollHeight;
+  });
+}
+
+function backToChannel(){
+  dmUser = null;
+  chatHeader.textContent = "";
+  fetchMessages();
 }
 
 // ================= LOCAL SYSTEM =================
