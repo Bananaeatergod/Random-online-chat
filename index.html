@@ -2,14 +2,14 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Firebase Discord Lite 4.2</title>
+<title>discordLITE+</title>
 <style>
 body { font-family:Arial; margin:0; background:#36393f; color:white; display:flex; height:100vh; }
 #channels, #users { width:180px; background:#2f3136; padding:10px; overflow-y:auto; -webkit-overflow-scrolling: touch; }
 #main { flex:1; display:flex; flex-direction:column; position: relative; }
 #chatHeader { padding:5px 10px; background:#202225; font-weight:bold; }
 #chat { flex:1; padding:10px; overflow-y:auto; }
-.message { margin-bottom:6px; }
+.message { margin-bottom:6px; word-break: break-word; }
 .username { font-weight:bold; }
 .system { color:#faa61a; font-style:italic; }
 .channel { cursor:pointer; margin-bottom:5px; }
@@ -103,7 +103,7 @@ async function register(){
   const password=document.getElementById("password").value;
   try{
     const userCred=await createUserWithEmailAndPassword(auth,email,password);
-    const color=`hsl(${Math.random()*360},70%,70%)`;
+    const color = randomColor();
     userColors[userCred.user.uid]=color;
     await set(ref(db,'users/'+userCred.user.uid),{email,color,admin:(email==="ethanq.au@gmail.com" || email==="bananaeatergod@outlook.com")});
     alert("Account created! Login now.");
@@ -115,6 +115,12 @@ async function login(){
   try{
     const userCred=await signInWithEmailAndPassword(auth,email,password);
     const uid=userCred.user.uid;
+
+    // Remove duplicate guest entries
+    Object.keys(onlineUsers).forEach(oid=>{
+      if(onlineUsers[oid].email.startsWith("Guest_")) remove(ref(db,"online/"+oid));
+    });
+
     const snap=await get(ref(db,'users/'+uid));
     const info=snap.val();
     if(info?.banned) return alert("You are banned.");
@@ -123,7 +129,7 @@ async function login(){
 }
 function guestLogin(){
   const guestName="Guest_"+Math.floor(Math.random()*9000+1000);
-  const guestColor=`hsl(${Math.random()*360},70%,70%)`;
+  const guestColor=randomColor();
   currentUser={uid:"guest_"+Date.now(),email:guestName,guest:true};
   userColors[currentUser.uid]=guestColor;
   loginDiv.innerHTML=`Logged in as ${guestName} (Guest)`;
@@ -154,17 +160,25 @@ async function renderUsers(){
   const usersSnap=await get(ref(db,'users'));
   const allUsers=usersSnap.val()||{};
   const onlineUIDs=new Set(Object.keys(onlineUsers));
+  const rendered = new Set();
+
   Object.entries(allUsers).sort((a,b)=>a[1].email.localeCompare(b[1].email)).forEach(([uid,u])=>{
+    if(!onlineUIDs.has(uid)) return;
+    if(rendered.has(uid)) return;
+    rendered.add(uid);
+
     const div=document.createElement("div");
     div.className="online-user";
     const status=document.createElement("span");
     status.style.display="inline-block"; status.style.width="10px"; status.style.height="10px";
     status.style.marginRight="6px"; status.style.borderRadius="50%";
-    status.style.backgroundColor=onlineUIDs.has(uid)?"green":"red";
+    status.style.backgroundColor="green";
     div.prepend(status);
+
     let displayName = u.email;
     if(u.admin) displayName = "👑 "+displayName;
     div.append(displayName);
+
     if(!currentUser?.guest && currentUser?.uid!==uid) div.onclick=()=>openDM(uid,u.email);
     list.appendChild(div);
   });
@@ -200,6 +214,7 @@ async function addChannel(){
   const name=document.getElementById("newChannel").value.trim();
   if(!name) return;
   await set(ref(db,'channels/'+name),true);
+  sendAdminAction(`CREATED CHANNEL "${name}"`);
 }
 
 // Listen for channel updates in real time
@@ -220,43 +235,57 @@ async function sendMessage(){
   if(!currentUser) return alert("Login first");
   const now=Date.now();
   if(now - lastMessageTime < 5000){ alert("You are on cooldown for 5 seconds!"); return; }
-  const text=msgInput.value.trim(); if(!text) return;
   lastMessageTime = now;
 
   // Admin command: /clear
   if(currentUser && !currentUser.guest){
     const snap=await get(ref(db,'users/'+currentUser.uid));
     const info=snap.val();
-    if(info?.admin && text==="/clear"){
+    if(info?.admin && msgInput.value==="/clear"){
       remove(ref(db,"messages/"+channel));
       msgInput.value="";
+      sendAdminAction(`CLEARED THE CHAT`);
       return;
     }
   }
 
+  const text=msgInput.value.trim(); if(!text) return;
   if(text.includes("@everyone") && !currentUser.guest) pingSound.play();
   push(ref(db,"messages/"+channel),{
     uid:currentUser.uid,email:currentUser.email,text,
     color:userColors[currentUser.uid]||"#fff",
-    time:new Date().toLocaleTimeString()
+    time:new Date().toLocaleTimeString(),
+    dm: dmUser ? dmUser : null
   });
   msgInput.value=""; mentionList.style.display="none";
 }
+
 async function fetchMessages(){
   onValue(ref(db,"messages/"+channel),snap=>{
     chatDiv.innerHTML="";
     const msgs=snap.val()||{};
     Object.values(msgs).forEach(m=>{
+      if(m.dm && m.dm!==currentUser.uid && m.uid!==currentUser.uid) return;
+
       const div=document.createElement("div"); div.className="message";
       let t=m.text.replace(/@everyone/g,'<span class="highlight">@everyone</span>');
+
+      // Highlight @mentions
+      const mentionRegex = new RegExp("@"+currentUser.email,"gi");
+      t = t.replace(mentionRegex, `<span class="highlight">@$&</span>`);
+
       let displayColor = m.color;
       let displayName = m.email;
-      // Check admin for crown + red
+
       get(ref(db,'users/'+m.uid)).then(uSnap=>{
         const info=uSnap.val();
-        if(info?.admin){ displayColor="red"; displayName="👑 "+displayName; }
+        if(info?.admin){
+          displayColor="red"; displayName="👑 "+displayName;
+        }
+        if(dmUser) displayColor="#b27aff"; // purple for DMs
         div.innerHTML=`<span class="username" style="color:${displayColor}">${displayName}</span> <small>${m.time}</small>: ${t}`;
       });
+
       chatDiv.appendChild(div);
     });
     chatDiv.scrollTop=chatDiv.scrollHeight;
@@ -265,9 +294,16 @@ async function fetchMessages(){
 fetchMessages();
 
 function switchChannel(c){ channel=c; dmUser=null; chatHeader.textContent=""; sendLocalSystem(`Switched to #${c}`); fetchMessages(); }
-function openDM(targetUid,targetEmail){ dmUser=targetUid; chatHeader.textContent="DM with "+targetEmail; }
+function openDM(targetUid,targetEmail){ dmUser=targetUid; chatHeader.textContent="DM with "+targetEmail; fetchMessages(); }
 function backToChannel(){ dmUser=null; chatHeader.textContent=""; fetchMessages(); }
 function sendLocalSystem(text){ const div=document.createElement("div"); div.className="message system"; div.innerHTML=`<span class="username" style="color:#faa61a">SYSTEM</span>: ${text}`; chatDiv.appendChild(div); chatDiv.scrollTop=chatDiv.scrollHeight; }
+
+function sendAdminAction(action){
+  const div=document.createElement("div"); div.className="message system";
+  div.innerHTML=`<span class="username" style="color:red">@ ADMIN</span> HAS ${action}`;
+  chatDiv.appendChild(div);
+  chatDiv.scrollTop=chatDiv.scrollHeight;
+}
 
 // ================= MENTION LIST =================
 async function updateMentionList(){
@@ -278,15 +314,28 @@ async function updateMentionList(){
   const usersSnap=await get(ref(db,'users'));
   const allUsers=usersSnap.val()||{};
   let matches=["everyone"];
-  matches=matches.concat(Object.values(allUsers).map(u=>u.email).filter(e=>e.toLowerCase().includes(query)));
+  matches = matches.concat(
+    Object.values(allUsers)
+      .filter(u => !u.guest && u.email.toLowerCase().includes(query))
+      .map(u => u.email)
+  );
+
   mentionList.innerHTML="";
   matches.forEach(u=>{
-    const div=document.createElement("div"); div.textContent="@"+u;
-    div.onclick=()=>{ msgInput.value=val.slice(0,atIndex)+"@"+u+" "; mentionList.style.display="none"; msgInput.focus(); };
+    const div=document.createElement("div"); 
+    div.textContent="@"+u;
+    div.onclick=()=>{
+      msgInput.value = val.slice(0,atIndex) + "@"+u+" ";
+      mentionList.style.display="none"; 
+      msgInput.focus();
+    };
     mentionList.appendChild(div);
   });
   mentionList.style.display="block";
 }
+
+// ================= UTIL =================
+function randomColor(){ return `hsl(${Math.random()*360},70%,70%)`; }
 
 // ================= INITIALIZATION =================
 fetchChannels();
